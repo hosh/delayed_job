@@ -26,14 +26,14 @@ module Delayed
 
         # When a worker is exiting, make sure we don't have any locked jobs.
         def self.clear_locks!(worker_name)
-          update_all("locked_by = null, locked_at = null", ["locked_by = ?", worker_name])
+          where(:locked_by => worker_name).update_all("locked_by = null, locked_at = null")
         end
 
         # Find a few candidate jobs to run (in case some immediately get locked by others).
         def self.find_available(worker_name, limit = 5, max_run_time = Worker.max_run_time)
           scope = self.ready_to_run(worker_name, max_run_time)
-          scope = scope.scoped(:conditions => ['priority >= ?', Worker.min_priority]) if Worker.min_priority
-          scope = scope.scoped(:conditions => ['priority <= ?', Worker.max_priority]) if Worker.max_priority
+          scope = scope.where(['priority >= ?', Worker.min_priority]) if Worker.min_priority
+          scope = scope.where(['priority <= ?', Worker.max_priority]) if Worker.max_priority
 
           ::ActiveRecord::Base.silence do
             scope.by_priority.all(:limit => limit)

@@ -1,69 +1,74 @@
-class NamedJob < Struct.new(:perform)
-  def display_name
+class NamedJob < Struct.new(:call)
+  def self.display_name
     'named_job'
   end
 end
 
 class SimpleJob
   cattr_accessor :runs; self.runs = 0
-  def perform; @@runs += 1; end
+  def self.call(args); @@runs += 1; end
 end
 
 class ErrorJob
   cattr_accessor :runs; self.runs = 0
-  def perform; raise 'did not work'; end
+  def self.call(args)
+    raise 'did not work'
+  end
 end
 
-class CustomRescheduleJob < Struct.new(:offset)
-  cattr_accessor :runs; self.runs = 0
-  def perform; raise 'did not work'; end
-  def reschedule_at(time, attempts); time + offset; end
+class CustomRescheduleJob 
+  cattr_accessor :runs, :offset; self.runs = 0
+  def self.call(args); raise 'did not work'; end
+  def self.reschedule_at(time, attempts); time + offset; end
 end
 
 class LongRunningJob
-  def perform; sleep 250; end
+  def self.call(args)
+    sleep 250
+  end
 end
 
 class OnPermanentFailureJob < SimpleJob
-  def failure; end
-  def max_attempts; 1; end
+  def self.failure; end
+  def self.max_attempts; 1; end
 end
 
 module M
   class ModuleJob
     cattr_accessor :runs; self.runs = 0
-    def perform; @@runs += 1; end
+    def self.call(args); @@runs += 1; end
   end
 end
 
 class CallbackJob
   cattr_accessor :messages
+  
 
-  def enqueue(job)
-    self.class.messages << 'enqueue'
+  def self.enqueue(job)
+    messages << 'enqueue'
   end
 
-  def before(job)
-    self.class.messages << 'before'
+  def self.before(job)
+    messages << 'before'
   end
 
-  def perform
-    self.class.messages << 'perform'
+  def self.call(args)
+    messages << 'call'
   end
 
-  def after(job)
-    self.class.messages << 'after'
+  def self.after(job)
+    messages << 'after'
   end
 
-  def success(job)
-    self.class.messages << 'success'
+  def self.success(job)
+    messages << 'success'
   end
 
-  def error(job, error)
-    self.class.messages << "error: #{error.class}"
+  def self.error(job, error)
+    messages << "error: #{error.class}"
   end
 
-  def failure(job)
-    self.class.messages << 'failure'
+  def self.failure(job)
+    messages << 'failure'
   end
 end

@@ -7,29 +7,21 @@ module Delayed
 
       module ClassMethods
         # Add a job to the queue
-        def enqueue(*args)
-          options = {
-            :priority => Delayed::Worker.default_priority
-          }.merge!(args.extract_options!)
+        def enqueue(_handler, arguments = {}, options = {})
+          options = { :priority => Delayed::Worker.default_priority }.merge(options)
 
-          options[:payload_object] ||= args.shift
+          options[:handler_object] = _handler
+          options[:arguments] = arguments
 
-          if args.size > 0
-            warn "[DEPRECATION] Passing multiple arguments to `#enqueue` is deprecated. Pass a hash with :priority and :run_at."
-            options[:priority] = args.first || options[:priority]
-            options[:run_at]   = args[1]
-          end
+          raise ArgumentError, 'Cannot enqueue items which do not respond to call' unless options[:handler_object].respond_to?(:call)
+          raise ArgumentError, 'Arguments must be a Hash' unless options[:arguments].is_a?(Hash) && options[:arguments].respond_to?(:to_json)
 
-          unless options[:payload_object].respond_to?(:perform)
-            raise ArgumentError, 'Cannot enqueue items which do not respond to perform'
-          end
-          
-          if Delayed::Worker.delay_jobs
+          if Delayed::Worker.delay_jobs || options[:run_at]
             self.create(options).tap do |job|
               job.hook(:enqueue)
             end
           else
-            options[:payload_object].perform
+            options[:handler_object].call(options[:arguments])
           end
         end
 
@@ -60,31 +52,36 @@ module Delayed
       end
       alias_method :failed, :failed?
 
-      ParseObjectFromYaml = /\!ruby\/\w+\:([^\s]+)/
-
       def name
-        @name ||= payload_object.respond_to?(:display_name) ?
-                    payload_object.display_name :
-                    payload_object.class.name
-      rescue DeserializationError
-        ParseObjectFromYaml.match(handler)[1]
+        @name ||= handler_object.respond_to?(:display_name) ? handler_object.display_name : (handler_object.is_a?(Class) ? handler_object.name : handler_object.class.name )
       end
 
-      def payload_object=(object)
-        @payload_object = object
-        self.handler = object.to_yaml
+      def arguments=(hash)
+        @arguments = hash
+        self.arguments_json = hash.to_json
       end
 
-      def payload_object
-        @payload_object ||= YAML.load(self.handler)
-      rescue TypeError, LoadError, NameError, ArgumentError => e
+      def arguments
+        return nil unless self.arguments_json && self.arguments_json != 'null'
+        @arguments ||= JSON.parse(self.arguments_json)
+      rescue TypeError, LoadError, NameError, ArgumentError, JSON::ParserError => e
         raise DeserializationError,
-          "Job failed to load: #{e.message}. Handler: #{handler.inspect}"
+          "Job failed to load: #{e.message}. Handler: #{handler.inspect}, Arguments: #{arguments_json}"
+      end
+
+      def handler_object
+        @handler_object ||= self.handler.constantize
+      rescue TypeError, LoadError, NameError, ArgumentError => e
+        raise DeserializationError, "Job failed to load: #{e.message}. Handler: #{handler.inspect}, Arguments: #{arguments_json}"
+      end
+
+      def handler_object=(_handler)
+        self.handler = _handler.name
       end
 
       def invoke_job
         hook :before
-        payload_object.perform
+        handler_object.call(self.arguments)
         hook :success
       rescue Exception => e
         hook :error, e
@@ -100,8 +97,8 @@ module Delayed
       end
 
       def hook(name, *args)
-        if payload_object.respond_to?(name)
-          method = payload_object.method(name)
+        if handler_object.respond_to?(name)
+          method = handler_object.method(name)
           method.arity == 0 ? method.call : method.call(self, *args)
         end
       rescue DeserializationError
@@ -109,16 +106,18 @@ module Delayed
       end
 
       def reschedule_at
-        payload_object.respond_to?(:reschedule_at) ?
-          payload_object.reschedule_at(self.class.db_time_now, attempts) :
+        if handler_object.respond_to?(:reschedule_at) 
+          handler_object.reschedule_at(self.class.db_time_now, attempts) 
+        else
           self.class.db_time_now + (attempts ** 4) + 5
+        end
       end
-      
+
       def max_attempts
-        payload_object.max_attempts if payload_object.respond_to?(:max_attempts)
+        handler_object.max_attempts if handler_object.respond_to?(:max_attempts)
       end
-      
-    protected
+
+      protected
 
       def set_default_run_at
         self.run_at ||= self.class.db_time_now
