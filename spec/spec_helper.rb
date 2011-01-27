@@ -42,18 +42,8 @@ ActiveRecord::Schema.define do
   end
 end
 
-# Purely useful for test cases...
-class Story < ActiveRecord::Base
-  def tell; text; end
-  def whatever(n, _); tell*n; end
-
-  handle_asynchronously :whatever
-end
 
 Delayed::Worker.backend = :active_record
 
 # Add this directory so the ActiveSupport autoloading works
 ActiveSupport::Dependencies.autoload_paths << File.dirname(__FILE__)
-
-# Add this to simulate Railtie initializer being executed
-ActionMailer::Base.send(:extend, Delayed::DelayMail)
